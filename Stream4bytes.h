@@ -8,8 +8,11 @@
 #include<WS2tcpip.h>
 #include<conio.h>
 #include <cstdint>
+#include "Resource.h"
 
+#define MAX_ACC 2048
 #define BUFF_SIZE 1024
+
 //define code request
 #define SUCCESS_LOGIN 10
 #define SUCCESS_POST 20
@@ -20,6 +23,24 @@
 #define NOT_LOGIN 21
 #define REQUEST_UNKNOWN 99
 
+/**
+* @structure to save login status
+* @param1[in] usersock: Socket identifier on the server
+* @param2[in] nameuser: Account's name logged in at client
+* @param3[in] status: true is login, false is not login
+*/
+typedef struct status_user {
+	SOCKET usersock;
+	char nameuser[100] = "";
+	bool status;
+} st_u;
+
+/**
+* @brief send message in stream by 4 bytes
+* @param[in] socket: the connected socket client - server
+* @param[in] buffer: message
+* @return: if no error occurs, return the number of bytes sent or send a value of SOCKET_ERROR
+*/
 int send_Stream(SOCKET &socket, char *buff) {
 	unsigned char bytes[4];
 	int ret, buffLen;
@@ -33,6 +54,7 @@ int send_Stream(SOCKET &socket, char *buff) {
 	if (ret == SOCKET_ERROR) {
 		return ret;
 	}
+
 	//Send the message
 	for (int i = 0; i < buffLen; i += ret) {
 		ret = send(socket, buff + i, buffLen - i, 0);
@@ -54,6 +76,7 @@ int recv_Stream(SOCKET socket, char* buff) {
 	uint32_t len = 0;
 
 	//Receive the length of the message
+	//ret = recv(socket, (char *)bytes, 4, MSG_WAITALL);
 	ret = recv(socket, (char *)bytes, 4, 0);
 	if (ret < 1) {
 		printf("Error %d: Can't receive data", WSAGetLastError());
@@ -81,42 +104,124 @@ int recv_Stream(SOCKET socket, char* buff) {
 }
 
 /**
-* @brief show message rely from server
-* @param[in] buff: the message from server
+* @brief check request message
+* @param[in] buff: message from client
+* @return request message type. return 1 if login request, return 2 if post request, return 3 if logout request, return 0 other.
 */
-void showResult(char *buff) {
-	int Rely = atoi(buff);
+int check_case(char buff[BUFF_SIZE]) {
+	char buff_[BUFF_SIZE] = "";
+	strcat_s(buff_, BUFF_SIZE, buff);
+	buff_[5] = '\0';
+	if (strcmp(buff_, "USER ") == 0) return 1;
+	else if (strcmp(buff_, "POST ") == 0) return 2;
+	else {
+		buff_[3] = '\0';
+		if (strcmp(buff_, "BYE") == 0) return 3;
+	}
+	return 0;
+}
+
+/**
+* @brief check account
+* @param[in] buff: account from client
+* @return status account. return 1 if account active, return 0 if account locked, return 2 if account does not exist
+*/
+int check_user(char buff[BUFF_SIZE]) {
+	char buff_[BUFF_SIZE] = "";
+	strcat_s(buff_, BUFF_SIZE, buff + 5);
+	for (int i = 0; i < 2050; i++)
+		if (strcmp(buff_, user[i]) == 0) {
+			if (status_acc[i] == 0) return 1;
+			else return 0;
+		}
+	return 2;
+}
+
+/**
+* @brief login account
+* @param[out] User[]: list User
+* @param[in] index: the index of current User
+* @param[in] username: account from client
+* @return request message type. return LOGGED if logged in, ACCOUNT_BLOCKED if account is blocked, SUCCESS_LOGIN if success login, ACCOUNT_NOT_EXISTED if account is not existed
+*/
+int login(st_u User[], int index, char username[]) {
+	if (User[index].status == 1) {   //logged in
+		return LOGGED;
+	}
+	else {
+		if (check_user(username) == 0) return ACCOUNT_BLOCKED;
+		else if (check_user(username) == 1) {
+			User[index].status = 1;
+			strcat_s(User[index].nameuser, sizeof(User[index].nameuser), username + 5);
+			return SUCCESS_LOGIN;
+		}
+		else return ACCOUNT_NOT_EXISTED;
+	}
+}
+
+/**
+* @brief post message
+* @param[out] User[]: list User
+* @param[in] index: the index of current User
+* @param[in] buff: message from client
+* @return request message type. return NOT_LOGIN if not login, SUCCESS_POST if success post
+*/
+int post(st_u User[], int index, char buff[]) {
+	if (User[index].status == 1) return SUCCESS_POST;
+	return NOT_LOGIN;
+}
+
+/**
+* @brief logout account
+* @param[out] User[]: list User
+* @param[in] index: the index of current User
+* @return request message type. return NOT_LOGIN if not login, SUCCESS_LOGOUT if success logout
+*/
+int logout(st_u User[], int index) {
+	if (User[index].status == 1) {
+		User[index].nameuser[0] = '\0';     //delete name user
+		User[index].status = 0;
+		return SUCCESS_LOGOUT;
+	}
+	else return NOT_LOGIN;
+}
+
+/**
+* @brief show message rely from server
+* @param[in] Rely: the message from server
+*/
+void showResult(int Rely) {
 	switch (Rely) {
 		case SUCCESS_LOGIN: {
-			printf("You have successfully logged in!\n");
+			printf("%d : You have successfully logged in!\n", Rely);
 			break;
 		}
 		case ACCOUNT_NOT_EXISTED: {
-			printf("Account does not exist!\n");
+			printf("%d : Account does not exist!\n", Rely);
 			break;
 		}
 		case ACCOUNT_BLOCKED: {
-			printf("Account has been locked!\n");
+			printf("%d : Account has been locked!\n", Rely);
 			break;
 		}
 		case LOGGED: {
-			printf("You are logging in another account!\n");
+			printf("%d : You are logging in another account!\n", Rely);
 			break;
 		}
 		case SUCCESS_POST: {
-			printf("You have successfully posted!\n");
+			printf("%d : You have successfully posted!\n", Rely);
 			break;
 		}
 		case NOT_LOGIN: {
-			printf("You are not logged in!\n");
+			printf("%d : You are not logged in!\n", Rely);
 			break;
 		}
 		case SUCCESS_LOGOUT: {
-			printf("You have successfully logged out!\n");
+			printf("%d : You have successfully logged out!\n", Rely);
 			break;
 		}
 		case REQUEST_UNKNOWN: {
-			printf("Message unidentified!\n");
+			printf("%d : Message unidentified!\n", Rely);
 			break;
 		}
 	}
